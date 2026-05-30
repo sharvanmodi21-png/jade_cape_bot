@@ -1,0 +1,5 @@
+EntryDateTime,Symbol,Side,Quantity,EntryPrice,StopLoss,Target,RiskPercent,Mode,PotentialProfit,PotentialLoss
+25-05-2026 19:58,BTCUSDT,BUY,0.73,77612.26,77475.22,76108,1,PAPER,-1514.26,137.04
+25-05-2026 20:13,BTCUSDT,BUY,1.355,77549.04,77475.22,76108,1,PAPER,-1441.04,73.82
+,,,,,,,,,,
+,,,,,,,,,,
