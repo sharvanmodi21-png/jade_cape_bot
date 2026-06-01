@@ -3,7 +3,7 @@
 Jade Cape Crypto Intraday Trading Bot
 Implements the liquidity-based intraday strategy for cryptocurrency markets
 """
-
+ 
 import os
 import time
 import logging
@@ -15,23 +15,24 @@ from binance.exceptions import BinanceAPIException
 import schedule
 import warnings
 from dotenv import load_dotenv
-
+ 
 warnings.filterwarnings('ignore')
 load_dotenv()
-
+ 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('jade_cape_bot.log', encoding='utf-8')
+        logging.FileHandler('jade_cape_bot.log', encoding='utf-8'),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
-
+ 
 class JadeCapeBot:
     """Main bot class"""
-
+ 
     def __init__(self):
         """Initialize the Jade Cape trading bot"""
         self.api_key = os.getenv('BINANCE_API_KEY')
@@ -44,26 +45,26 @@ class JadeCapeBot:
             logger.info("Binance API connection verified")
         except Exception as e:
             logger.error(f"Failed to verify Binance connection: {e}")
-
+ 
         # Trading settings
         self.symbol = os.getenv('SYMBOL', 'BTCUSDT')
         self.trading_mode = os.getenv('TRADING_MODE', 'PAPER')  # PAPER or LIVE
         self.risk_percent = float(os.getenv('RISK_PERCENT', '1.0'))
         self.max_trades_per_day = int(os.getenv('MAX_TRADES_PER_DAY', '3'))
-
+ 
         # Session times (UTC)
         self.session_start = os.getenv('SESSION_START', '12:30')
         self.session_end = os.getenv('SESSION_END', '16:00')
         self.midday_chop_start = os.getenv('MIDDAY_CHOP_START', '16:00')
         self.midday_chop_end = os.getenv('MIDDAY_CHOP_END', '18:00')
         self.exit_by = os.getenv('EXIT_BY', '17:00')
-
+ 
         # State tracking
         self.daily_trades = 0
         self.daily_pnl = 0.0
         self.last_trade_date = None
         self.positions = {}
-
+ 
         # Strategy parameters
         self.timeframes = {
             'daily': '1d',
@@ -72,9 +73,9 @@ class JadeCapeBot:
             '15m': '15m',
             '5m': '5m'
         }
-
+ 
         logger.info(f"Jade Cape Bot initialized - Symbol: {self.symbol}, Mode: {self.trading_mode}")
-
+ 
     # ---------------------------------------------------------------------
     # Helper methods
     # ---------------------------------------------------------------------
@@ -86,28 +87,28 @@ class JadeCapeBot:
             self.daily_pnl = 0.0
             self.last_trade_date = today
             logger.info("Daily counters reset")
-
+ 
     def is_within_session(self, check_time: datetime = None) -> bool:
         """Return True if current UTC time is inside the configured session"""
         if check_time is None:
             check_time = datetime.utcnow()
         current = check_time.strftime('%H:%M')
         return self.session_start <= current <= self.session_end
-
+ 
     def is_within_midday_chop(self, check_time: datetime = None) -> bool:
         """Return True if we are in the midday-chop window (no trading)"""
         if check_time is None:
             check_time = datetime.utcnow()
         current = check_time.strftime('%H:%M')
         return self.midday_chop_start <= current <= self.midday_chop_end
-
+ 
     def should_exit_positions(self, check_time: datetime = None) -> bool:
         """Return True if we have passed the exit-by time"""
         if check_time is None:
             check_time = datetime.utcnow()
         current = check_time.strftime('%H:%M')
         return current >= self.exit_by
-
+ 
     def get_historical_data(self, timeframe: str, limit: int = 100) -> pd.DataFrame:
         """Fetch klines from Binance and return a cleaned DataFrame"""
         try:
@@ -127,7 +128,7 @@ class JadeCapeBot:
         except Exception as e:
             logger.error(f"Error fetching {timeframe} data: {e}")
             return pd.DataFrame()
-
+ 
     def calculate_daily_bias(self) -> str:
         """Determine bias from daily and 4-hour candles"""
         try:
@@ -145,7 +146,7 @@ class JadeCapeBot:
         except Exception as e:
             logger.error(f"Error calculating daily bias: {e}")
             return 'neutral'
-
+ 
     def mark_liquidity_zones(self) -> dict:
         """Identify key liquidity levels for the current day"""
         zones = {}
@@ -169,7 +170,7 @@ class JadeCapeBot:
                 zones['London_Low'] = london['low'].min()
         logger.info(f"Liquidity zones marked: {zones}")
         return zones
-
+ 
     def detect_liquidity_raid(self, df_15m: pd.DataFrame, zones: dict):
         """Return (raid_detected, level_name, sweep_price)"""
         if df_15m.empty or not zones:
@@ -186,7 +187,7 @@ class JadeCapeBot:
                 if name in high_levels and candle['high'] > price and candle['close'] < price:
                     return True, name, candle['high']
         return False, None, 0.0
-
+ 
     # Simple placeholder signal detectors – real implementation can be richer
     def detect_fvg(self, df: pd.DataFrame, direction: str) -> bool:
         if len(df) < 3:
@@ -198,7 +199,7 @@ class JadeCapeBot:
             if direction == 'bearish' and c1['low'] > c3['high'] and c2['close'] < c2['open']:
                 return True
         return False
-
+ 
     def detect_mss(self, df: pd.DataFrame, direction: str) -> bool:
         if len(df) < 6:
             return False
@@ -218,13 +219,13 @@ class JadeCapeBot:
                         return True
                     break
         return False
-
+ 
     def detect_turtle_soup(self, df: pd.DataFrame, direction: str) -> bool:
         return True  # Simplified placeholder
-
+ 
     def detect_breaker_block(self, df: pd.DataFrame, direction: str) -> bool:
         return True  # Simplified placeholder
-
+ 
     def detect_confirmation_signal(self, df_15m: pd.DataFrame, df_5m: pd.DataFrame, direction: str):
         if self.detect_fvg(df_15m, direction):
             return True, 'FVG'
@@ -235,7 +236,7 @@ class JadeCapeBot:
         if self.detect_breaker_block(df_15m, direction):
             return True, 'Breaker_Block'
         return False, None
-
+ 
     def calculate_position_size(self, account_balance: float, entry_price: float, stop_loss: float) -> float:
         risk_amount = account_balance * (self.risk_percent / 100.0)
         stop_distance = abs(entry_price - stop_loss)
@@ -243,7 +244,7 @@ class JadeCapeBot:
             return 0.0
         qty = risk_amount / stop_distance
         return max(0.0, float('{:.6f}'.format(qty)))
-
+ 
     # ---------------------------------------------------------------------
     # Order handling
     # ---------------------------------------------------------------------
@@ -268,7 +269,7 @@ class JadeCapeBot:
             logger.error(f"Binance API error placing order: {e.message}")
         except Exception as e:
             logger.error(f"Unexpected error placing order: {e}")
-
+ 
     def close_all_positions(self):
         for sym, pos in list(self.positions.items()):
             try:
@@ -282,7 +283,7 @@ class JadeCapeBot:
                 logger.error(f"Error closing position for {sym}: {e}")
             finally:
                 del self.positions[sym]
-
+ 
     # ---------------------------------------------------------------------
     # Core workflow
     # ---------------------------------------------------------------------
@@ -300,34 +301,34 @@ class JadeCapeBot:
                 logger.info("Exit by time reached – closing positions if any.")
                 self.close_all_positions()
                 return
-
+ 
             df_15m = self.get_historical_data(self.timeframes['15m'], limit=200)
             df_5m = self.get_historical_data(self.timeframes['5m'], limit=200)
             if df_15m.empty or df_5m.empty:
                 logger.warning("Insufficient market data – skipping.")
                 return
-
+ 
             bias = self.calculate_daily_bias()
             if bias == 'neutral':
                 logger.info("No clear daily bias – skipping.")
                 return
-
+ 
             zones = self.mark_liquidity_zones()
             raid, raid_level, raid_price = self.detect_liquidity_raid(df_15m, zones)
             if not raid:
                 logger.info("No liquidity raid detected – waiting.")
                 return
-
+ 
             direction = 'bullish' if raid_level in ['PDL', 'Asian_Low', 'London_Low'] else 'bearish'
             signal_found, signal_type = self.detect_confirmation_signal(df_15m, df_5m, direction)
             if not signal_found:
                 logger.info("No confirmation signal after raid – skipping.")
                 return
-
+ 
             if self.daily_trades >= self.max_trades_per_day:
                 logger.info("Max trades reached for today – skipping.")
                 return
-
+ 
             entry_price = df_15m.iloc[-1]['close']
             stop_price = raid_price
             account_balance = self.get_account_balance()
@@ -335,11 +336,11 @@ class JadeCapeBot:
             if qty <= 0:
                 logger.warning("Calculated position size is zero – skipping trade.")
                 return
-
+ 
             self.place_order(direction, qty, entry_price, stop_price)
         except Exception as e:
             logger.error(f"Error in check_and_trade: {e}")
-
+ 
     def get_account_balance(self) -> float:
         """Return USDT balance (paper mode returns a dummy value)"""
         try:
@@ -350,14 +351,14 @@ class JadeCapeBot:
         except Exception as e:
             logger.error(f"Error fetching account balance: {e}")
             return 10000.0
-
+ 
     # ---------------------------------------------------------------------
     # Scheduler
     # ---------------------------------------------------------------------
     def is_within_operating_window(self, check_time: datetime = None) -> bool:
         """Operating window disabled for testing – always return True."""
         return True
-
+ 
     def run(self):
         """Start the scheduler loop, active only between 13:00-16:00 UTC"""
         schedule.every(5).minutes.do(self.check_and_trade)
@@ -376,7 +377,7 @@ class JadeCapeBot:
             logger.info("Bot stopped by user")
         except Exception as e:
             logger.error(f"Bot error: {e}")
-
+ 
 # Entry point
 if __name__ == "__main__":
     bot = JadeCapeBot()
