@@ -52,7 +52,7 @@ class JadeCapeBot:
         self.max_trades_per_day = int(os.getenv('MAX_TRADES_PER_DAY', '3'))
 
         # Session times (UTC)
-        self.session_start = os.getenv('SESSION_START', '13:00')
+        self.session_start = os.getenv('SESSION_START', '12:30')
         self.session_end = os.getenv('SESSION_END', '16:00')
         self.midday_chop_start = os.getenv('MIDDAY_CHOP_START', '16:00')
         self.midday_chop_end = os.getenv('MIDDAY_CHOP_END', '18:00')
@@ -360,8 +360,8 @@ class JadeCapeBot:
 
     def run(self):
         """Start the scheduler loop, active only between 13:00-16:00 UTC"""
-        schedule.every(15).minutes.do(self.check_and_trade)
-        logger.info("Scheduler started: running check_and_trade every 15 minutes between 13:00-16:00 UTC.")
+        schedule.every(5).minutes.do(self.check_and_trade)
+        logger.info("Scheduler started: running check_and_trade every 5 minutes between 12:30-16:00 UTC.")
         # Immediate first run if within window
         if self.is_within_operating_window():
             self.check_and_trade()
