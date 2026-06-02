@@ -59,7 +59,6 @@ class JadeCapBot:
         self.daily_trades = 0
         self.last_day = None
         self.open_position = None  # dict or None
-        self.paper_equity = float(os.getenv("PAPER_START_EQUITY", "10000"))
         if self.cfg.instrument_is_crypto:
             logger.warning("Running on CRYPTO — this is an adaptation of a futures/FX "
                            "strategy. Validate with the backtest before trusting results.")
@@ -94,16 +93,10 @@ class JadeCapBot:
 
     # ----- data -----
     def _klines(self, interval, limit=200):
-        """Fetch klines. LIVE uses the authenticated client; PAPER uses the
-        public REST endpoint (no API key needed) so it can run anywhere."""
-        if self.trading_mode == "LIVE":
-            raw = self.client.get_klines(symbol=self.symbol, interval=interval, limit=limit)
-        else:
-            import urllib.request, json
-            url = (f"https://api.binance.com/api/v3/klines?symbol={self.symbol}"
-                   f"&interval={interval}&limit={limit}")
-            with urllib.request.urlopen(url, timeout=15) as r:
-                raw = json.loads(r.read().decode())
+        if self.trading_mode != "LIVE":
+            raise RuntimeError("Paper mode has no live data feed; use the backtester "
+                               "or wire a data source here.")
+        raw = self.client.get_klines(symbol=self.symbol, interval=interval, limit=limit)
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close",
                                         "volume", "ct", "qav", "n", "tb", "tq", "ig"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
@@ -113,7 +106,7 @@ class JadeCapBot:
 
     def _balance(self):
         if self.trading_mode != "LIVE":
-            return self.paper_equity
+            return 10000.0
         bal = self.client.get_asset_balance(asset="USDT")
         return float(bal.get("free", 0.0)) if bal else 0.0
 
@@ -153,52 +146,9 @@ class JadeCapBot:
         logger.info(f"Position closed ({reason})")
         self.open_position = None
 
-    def _manage_paper_position(self):
-        """Check the open paper position against stop/T1/T2 using the latest price."""
-        if not self.open_position or self.trading_mode == "LIVE":
-            return
-        pos = self.open_position
-        s = pos["setup"]
-        df = self._klines("5m", 2)
-        if df.empty:
-            return
-        last = df.iloc[-1]
-        hi, lo = last["high"], last["low"]
-        exit_price = reason = None
-        if s.direction == Direction.BULLISH:
-            if lo <= s.stop:
-                exit_price, reason = s.stop, "stop"
-            elif hi >= s.t2:
-                exit_price, reason = s.t2, "t2"
-            elif not pos.get("t1_done") and hi >= s.t1:
-                pos["t1_done"] = True
-                logger.info(f"[PAPER] T1 hit @ {s.t1:.2f} — trailing stop to breakeven")
-                from dataclasses import replace
-                pos["setup"] = replace(s, stop=s.entry)
-        else:
-            if hi >= s.stop:
-                exit_price, reason = s.stop, "stop"
-            elif lo <= s.t2:
-                exit_price, reason = s.t2, "t2"
-            elif not pos.get("t1_done") and lo <= s.t1:
-                pos["t1_done"] = True
-                logger.info(f"[PAPER] T1 hit @ {s.t1:.2f} — trailing stop to breakeven")
-                from dataclasses import replace
-                pos["setup"] = replace(s, stop=s.entry)
-        if exit_price is not None:
-            direction_mult = 1 if s.direction == Direction.BULLISH else -1
-            pnl = (exit_price - s.entry) * direction_mult * pos["qty"]
-            self.paper_equity += pnl
-            logger.info(f"[PAPER] closed ({reason}) pnl={pnl:+.2f} "
-                        f"equity={self.paper_equity:.2f}")
-            self.open_position = None
-
     # ----- main step -----
     def step(self):
         self._reset_daily()
-
-        if self.open_position and self.trading_mode != "LIVE":
-            self._manage_paper_position()
 
         if self._past_exit_time():
             self._flatten("exit-by time")

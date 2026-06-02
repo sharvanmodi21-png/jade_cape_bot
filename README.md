@@ -1,107 +1,55 @@
-# Jade Cape Crypto Trading Bot
+# JadeCap Bot — Rebuilt
 
-A Python-based trading bot that implements the Jade Cape Liquidity & Volatility Playbook for cryptocurrency intraday trading.
+Three files plus this readme:
 
-## Features
+- `FIX_LIST.md` — every problem found in the original `jade_cape_bot.py`, by severity.
+- `jadecap_strategy.py` — pure strategy engine (no network/orders). The bot and the
+  backtester both call this, so what you test is what you trade.
+- `jadecap_bot.py` — execution layer. Defaults to PAPER. LIVE requires a deliberate opt-in.
+- `jadecap_backtest.py` — event-driven backtester with commission + slippage.
 
-- Implements the complete Jade Cape strategy for crypto markets
-- Paper trading mode for safe testing
-- Live trading capability with Binance API
-- Automated scanning every 15 minutes during NY session (13:00-16:00 UTC)
-- Risk management with configurable position sizing
-- Comprehensive logging and error handling
+## Quick start
 
-## Strategy Overview
-
-The bot identifies liquidity raids (stop hunts) followed by reversals using:
-- Session timing (NY Session: 13:00-16:00 UTC)
-- Institutional order flow patterns
-- Liquidity zones (PDH, PDL, Asian Session High/Low, London Session High/Low)
-- Confirmation signals (FVG, MSS, Turtle Soup, Breaker Block)
-
-## Setup Instructions
-
-### 1. Prerequisites
-- Python 3.8+
-- Binance account (for API keys)
-- Required Python packages (installed automatically)
-
-### 2. Installation
-1. Clone or copy this repository to your local machine
-2. Navigate to the `jade_cape_bot` directory
-
-### 3. Configuration
-1. Copy `.env.example` to `.env`:
-   ```bash
-   copy .env.example .env
-   ```
-2. Edit `.env` file and add your Binance API credentials:
-   ```
-   BINANCE_API_KEY=your_actual_api_key_here
-   BINANCE_API_SECRET=your_actual_api_secret_here
-   ```
-3. Configure trading parameters:
-   - `TRADING_MODE=PAPER` (use PAPER for testing, LIVE for real trading)
-   - `SYMBOL=BTCUSDT` (trading pair)
-   - `RISK_PERCENT=1.0` (risk per trade as % of account)
-   - `MAX_TRADES_PER_DAY=3`
-   - Session times in UTC (default: 13:00-16:00)
-
-### 4. Install Dependencies
-The bot will automatically install required packages on first run, or you can manually install:
 ```bash
-pip install -r requirements.txt
+pip install pandas numpy            # backtest only needs these
+python3 jadecap_backtest.py --synthetic          # proves the harness runs
+python3 jadecap_backtest.py --csv your_klines.csv --commission 0.05 --slippage 0.05
 ```
 
-### 5. Running the Bot
-Double-click `run_bot.bat` or run from command line:
-```bash
-python jade_cape_bot.py
-```
+CSV needs columns: `timestamp,open,high,low,close,volume` at 15-minute resolution
+(daily and 1h are resampled internally).
 
-## Important Notes
+## What changed from the original
 
-### Security
-- **Never commit your `.env` file** to version control
-- API keys provide access to your Binance account
-- Start with PAPER mode to test the strategy
-- When switching to LIVE mode, start with small position sizes
+The original had two always-`True` confirmation stubs (so it entered on every raid),
+no real stop or target, entered *during* the raid, and used single candle colours for
+bias. The rebuild enforces an ordered RAID → CONFIRMATION → ENTRY sequence, ties all
+four confirmations to the raid, places real OCO stop+target orders in live mode with an
+in-loop backstop, sizes by risk with lot-step rounding, and reads bias from swing
+structure. See `FIX_LIST.md` for the full list.
 
-### Paper Trading vs Live Trading
-- **PAPER mode**: Simulates trades without placing real orders
-- **LIVE mode**: Places actual orders on Binance
-- Always test thoroughly in PAPER mode before going live
+## Honest caveats — read these
 
-### Risk Management
-- The bot implements fixed fractional position sizing
-- Daily trade limits prevent overtrading
-- Stop losses are placed beyond liquidity raid levels
-- Never risk more than configured percentage per trade
+1. **The synthetic backtest result is negative, and that's expected.** Synthetic data is
+   a random walk; any strategy nets roughly negative after costs on it. It proves the
+   plumbing works, not that the strategy has an edge. You must run real BTC/ETH klines.
 
-## Files in This Directory
+2. **This is a futures/FX strategy bolted onto crypto.** The session-liquidity model
+   (PDH/PDL, Asian/London sweeps, NY window) was built for markets with a daily close and
+   session rhythm. Crypto trades 24/7 and respects these much less. The backtest is the
+   only way to find out if it transfers — don't assume it does.
 
-- `jade_cape_bot.py` - Main bot implementation
-- `requirements.txt` - Python dependencies
-- `.env.example` - Template for environment variables
-- `run_bot.bat` - Windows batch file to launch the bot
-- `README.md` - This file
+3. **No edge is demonstrated anywhere yet.** Unlike your JLaw system (validated over 695
+   signals), there is zero performance evidence for this model on real data. Treat any
+   live use as experimental and paper-trade first.
 
-## Strategy Parameters (Based on Jade Cape Model)
+4. **Confirmations are simplified.** Real FVG/MSS/turtle-soup/breaker detection is
+   genuinely discretionary in the playbook. The coded versions are reasonable
+   approximations, but they will both miss real setups and fire on weak ones. Tune and
+   re-test rather than trusting defaults.
 
-- **Primary Session**: NY Session (13:00-16:00 UTC)
-- **Instruments**: BTC/USDT (primary), ETH/USDT (secondary)
-- **Timeframes**: 
-  - Daily: Bias determination
-  - 4H: Liquidity zone identification
-  - 1H: Setup tracking
-  - 15m: Setup confirmation
-  - 5m: Entry timing
-- **Risk**: 0.5-1% per trade, max 3 trades/day, 2% daily loss limit
+5. **Live mode is intentionally gated.** `TRADING_MODE=LIVE` alone won't arm it; you also
+   need `JADECAP_ALLOW_LIVE=I_UNDERSTAND_THE_RISK`. This is on purpose.
 
-## Disclaimer
-
-THIS BOT IS FOR EDUCATIONAL PURPOSES ONLY. 
-CRYPTOCURRENCY TRADING INVOLVES SIGNIFICANT RISK OF LOSS.
-PAST PERFORMANCE DOES NOT GUARANTEE FUTURE RESULTS.
-THE AUTHOR IS NOT RESPONSIBLE FOR ANY LOSSES INCURRED WHILE USING THIS BOT.
-ALWAYS TRADE RESPONSIBLY AND CONSULT WITH A FINANCIAL ADVISOR.
+I'm not a financial advisor — this is a code rebuild and a testing tool, not a
+recommendation to trade.

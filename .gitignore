@@ -1,17 +1,5 @@
-# Local environment files
-.env
-.env.example
-
-# Python artifacts
 __pycache__/
 *.pyc
-*.pyo
-
-# Logs
 *.log
-
-# Data files that may be large
-trade_log.csv
-
-# IDE/editor files
-.vscode/
+.env
+.venv/
