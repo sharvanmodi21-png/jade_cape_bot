@@ -377,8 +377,8 @@ class JadeCapeBot:
 
     def run(self):
         """Start the scheduler loop, active only between 13:00-16:00 UTC"""
-        schedule.every(5).minutes.do(self.check_and_trade)
-        logger.info("Scheduler started: running check_and_trade every 5 minutes between 12:30-16:00 UTC.")
+        schedule.every(15).minutes.do(self.check_and_trade)
+        logger.info("Scheduler started: running check_and_trade every 15 minutes between 12:30-16:00 UTC.")
         # Immediate first run if within window
         if self.is_within_operating_window():
             self.check_and_trade()
