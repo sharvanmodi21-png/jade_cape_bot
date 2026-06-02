@@ -34,9 +34,9 @@ import numpy as np
 class StrategyConfig:
     # Session windows are stored as UTC (time) objects. Defaults map the playbook's
     # NY 9:30-11:30 EST window to UTC (EST = UTC-5 standard; adjust for DST as needed).
-    ny_session_start: time = time(14, 30)   # 9:30 EST
-    ny_session_end:   time = time(16, 30)   # 11:30 EST
-    exit_by:          time = time(17, 0)    # flatten intraday by here (12:00 EST)
+    ny_session_start: time = time(13, 0)    # 13:00 UTC
+    ny_session_end:   time = time(16, 0)    # 16:00 UTC
+    exit_by:          time = time(17, 0)    # flatten intraday by here
 
     asian_start: time = time(0, 0)
     asian_end:   time = time(8, 0)
