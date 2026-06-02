@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from jadecap_strategy import (
-    StrategyConfig, Direction, build_setup, position_size,
+    StrategyConfig, Direction, position_size, process_bar, StrategyState,
 )
 
 logging.basicConfig(
@@ -60,6 +60,7 @@ class JadeCapBot:
         self.last_day = None
         self.open_position = None  # dict or None
         self.paper_equity = float(os.getenv("PAPER_START_EQUITY", "10000"))
+        self.state = StrategyState()
         if self.cfg.instrument_is_crypto:
             logger.warning("Running on CRYPTO — this is an adaptation of a futures/FX "
                            "strategy. Validate with the backtest before trusting results.")
@@ -217,9 +218,14 @@ class JadeCapBot:
         df_1h = self._klines("1h", 200)
         daily = self._klines("1d", 60)
 
-        setup = build_setup(df_15m, daily, df_1h, self._now(), self.cfg)
+        setup = process_bar(df_15m, daily, df_1h, self._now(), self.cfg, self.state)
         if setup is None:
-            logger.info("No valid setup this cycle.")
+            if self.state.pending_raid is not None:
+                logger.info(f"Raid pending ({self.state.pending_raid.level_name}) — "
+                            f"waiting for confirmation, bar "
+                            f"{self.state.bars_since_raid}/{self.cfg.confirmation_window}.")
+            else:
+                logger.info("No raid this cycle — watching.")
             return
 
         qty = position_size(self._balance(), setup.entry, setup.stop, self.cfg)

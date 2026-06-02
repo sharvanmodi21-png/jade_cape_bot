@@ -25,7 +25,7 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
-from jadecap_strategy import StrategyConfig, Direction, build_setup
+from jadecap_strategy import StrategyConfig, Direction, build_setup, process_bar, StrategyState
 
 
 @dataclass
@@ -55,6 +55,7 @@ def run_backtest(df_15m: pd.DataFrame, scfg: StrategyConfig, btcfg: BTConfig):
     open_pos = None
     trades_today = 0
     cur_day = None
+    state = StrategyState()
 
     # warm-up so indicators have history
     start_i = 60
@@ -104,26 +105,26 @@ def run_backtest(df_15m: pd.DataFrame, scfg: StrategyConfig, btcfg: BTConfig):
                 equity_curve.append(equity)
                 open_pos = None
 
-        # ---- look for a new entry ----
-        if open_pos is None and trades_today < scfg.max_trades_per_day:
-            in_session = scfg.ny_session_start <= now.time() <= scfg.ny_session_end
-            if in_session:
-                df_15m_slice = df_15m.iloc[: i + 1]
-                daily = daily_all[daily_all["timestamp"] <= now]
-                h1 = h1_all[h1_all["timestamp"] <= now]
-                setup = build_setup(df_15m_slice, daily, h1, now.to_pydatetime(), scfg)
-                if setup is not None:
-                    # apply entry slippage
-                    fill = setup.entry * (1 + btcfg.slippage_pct / 100) \
-                        if setup.direction == Direction.BULLISH \
-                        else setup.entry * (1 - btcfg.slippage_pct / 100)
-                    risk_amt = equity * (scfg.risk_percent / 100)
-                    dist = abs(fill - setup.stop)
-                    qty = risk_amt / dist if dist > 0 else 0
-                    if qty > 0:
-                        open_pos = {"setup": setup, "qty": qty, "t1_done": False,
-                                    "init_risk": dist, "entry_fill": fill}
-                        trades_today += 1
+        # ---- advance the strategy state machine every in-session bar ----
+        in_session = scfg.ny_session_start <= now.time() <= scfg.ny_session_end
+        if in_session:
+            df_15m_slice = df_15m.iloc[: i + 1]
+            daily = daily_all[daily_all["timestamp"] <= now]
+            h1 = h1_all[h1_all["timestamp"] <= now]
+            setup = process_bar(df_15m_slice, daily, h1, now.to_pydatetime(), scfg, state)
+
+            # only ACT on a setup if we are flat and under the daily cap
+            if setup is not None and open_pos is None and trades_today < scfg.max_trades_per_day:
+                fill = setup.entry * (1 + btcfg.slippage_pct / 100) \
+                    if setup.direction == Direction.BULLISH \
+                    else setup.entry * (1 - btcfg.slippage_pct / 100)
+                risk_amt = equity * (scfg.risk_percent / 100)
+                dist = abs(fill - setup.stop)
+                qty = risk_amt / dist if dist > 0 else 0
+                if qty > 0:
+                    open_pos = {"setup": setup, "qty": qty, "t1_done": False,
+                                "init_risk": dist, "entry_fill": fill}
+                    trades_today += 1
 
     return _summarize(trades, equity_curve, btcfg)
 

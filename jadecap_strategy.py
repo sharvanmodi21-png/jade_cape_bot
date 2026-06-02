@@ -45,6 +45,7 @@ class StrategyConfig:
 
     raid_lookback_15m: int = 4
     raid_lookback_5m: int = 6
+    confirmation_window: int = 6         # bars after a raid to wait for confirmation
     bias_swing_lookback: int = 10        # candles used to read structural bias
     stop_buffer_pct: float = 0.001       # 0.1% beyond the sweep extreme
     risk_percent: float = 0.5            # % of account risked per trade
@@ -241,8 +242,13 @@ def detect_breaker_block(df: pd.DataFrame, direction: Direction, after_idx: int)
 
 
 def find_confirmation(df: pd.DataFrame, raid: Raid):
-    """Try each confirmation in order. Returns (name, entry_price) or (None, None).
-    All are tied to the raid: nothing fires before the raid candle."""
+    """Try each confirmation in order over the bars AFTER the raid up to the
+    current (last) bar. Returns (name, entry_price) or (None, None).
+
+    `raid.index` is the absolute index of the raid candle within `df`. The
+    detectors scan from raid.index forward, so confirmation can only be found
+    on bars that came after the raid — never on the raid bar itself.
+    """
     d = raid.direction
     lvl = detect_fvg(df, d, raid.index)
     if lvl is not None:
@@ -260,7 +266,110 @@ def find_confirmation(df: pd.DataFrame, raid: Raid):
 
 
 # ----------------------------------------------------------------------------- 
-# Setup assembly
+# Stateful raid -> confirmation -> entry machine
+# ----------------------------------------------------------------------------- 
+@dataclass
+class StrategyState:
+    """Carried across bars by the bot and the backtester.
+
+    Holds a pending raid (if one has fired and we are now waiting for
+    confirmation on subsequent bars). This is what makes the sequence ordered:
+    a raid is recorded on one bar, and confirmation is looked for on LATER bars.
+    """
+    pending_raid: Optional[Raid] = None
+    pending_zone_price: float = 0.0
+    bars_since_raid: int = 0
+
+
+def _make_setup_from(raid: Raid, entry: float, conf_name: str,
+                     as_of: datetime, cfg: StrategyConfig) -> Optional[Setup]:
+    """Assemble a Setup with stop/targets, validating entry is on the right side."""
+    if raid.direction == Direction.BULLISH:
+        stop = raid.sweep_price * (1 - cfg.stop_buffer_pct)
+        if entry <= stop:
+            return None
+        risk = entry - stop
+        t1 = entry + cfg.rr_t1 * risk
+        t2 = entry + cfg.rr_t2 * risk
+    else:
+        stop = raid.sweep_price * (1 + cfg.stop_buffer_pct)
+        if entry >= stop:
+            return None
+        risk = stop - entry
+        t1 = entry - cfg.rr_t1 * risk
+        t2 = entry - cfg.rr_t2 * risk
+    if risk <= 0:
+        return None
+    return Setup(direction=raid.direction, entry=entry, stop=stop, t1=t1, t2=t2,
+                 raid_level_name=raid.level_name, confirmation=conf_name, timestamp=as_of)
+
+
+def process_bar(df_15m: pd.DataFrame, daily: pd.DataFrame, intraday_1h: pd.DataFrame,
+                as_of: datetime, cfg: StrategyConfig, state: StrategyState) -> Optional[Setup]:
+    """Stateful, ordered pipeline. Call once per bar.
+
+    Step 1: if no pending raid, check for a NEW raid on the latest bar (matching bias).
+            Record it and return None — we do NOT enter on the raid bar.
+    Step 2: if a raid is pending, look for confirmation on this and subsequent bars.
+            If found within the window -> build and return the Setup (entry now).
+            If the window expires or price invalidates the raid -> clear it.
+    """
+    bias = structural_bias(daily, cfg.bias_swing_lookback)
+    if bias is None:
+        # no clear bias -> abandon any pending raid too
+        state.pending_raid = None
+        return None
+
+    # --- Step 2: we already have a pending raid; hunt for confirmation ---
+    if state.pending_raid is not None:
+        state.bars_since_raid += 1
+        raid = state.pending_raid
+
+        # invalidate if price has blown back through the swept level the wrong way
+        last = df_15m.iloc[-1]
+        if raid.direction == Direction.BULLISH and last["close"] < raid.sweep_price:
+            state.pending_raid = None
+            return None
+        if raid.direction == Direction.BEARISH and last["close"] > raid.sweep_price:
+            state.pending_raid = None
+            return None
+
+        # timeout
+        if state.bars_since_raid > cfg.confirmation_window:
+            state.pending_raid = None
+            return None
+
+        # rebase raid.index into the current df (df grows by one bar each call)
+        # the raid candle is `bars_since_raid` bars back from the last bar
+        raid_idx = len(df_15m) - 1 - state.bars_since_raid
+        if raid_idx < 0:
+            state.pending_raid = None
+            return None
+        rebased = Raid(raid.level_name, raid.sweep_price, raid.direction, raid_idx)
+
+        conf_name, entry = find_confirmation(df_15m, rebased)
+        if conf_name is None:
+            return None  # keep waiting
+
+        setup = _make_setup_from(rebased, entry, conf_name, as_of, cfg)
+        state.pending_raid = None  # consume the raid whether or not setup is valid
+        return setup
+
+    # --- Step 1: no pending raid; look for a new one on the latest bar ---
+    zones = mark_liquidity_zones(daily, intraday_1h, as_of, cfg)
+    if not zones:
+        return None
+    # only consider a raid on the most recent 1-2 bars so we genuinely wait afterward
+    raid = detect_raid(df_15m, zones, lookback=2)
+    if raid is None or raid.direction != bias:
+        return None
+    state.pending_raid = raid
+    state.bars_since_raid = 0
+    return None  # never enter on the raid bar — wait for next bars
+
+
+# ----------------------------------------------------------------------------- 
+# Stateless setup (kept for compatibility / single-shot checks)
 # ----------------------------------------------------------------------------- 
 def build_setup(df_15m: pd.DataFrame, daily: pd.DataFrame, intraday_1h: pd.DataFrame,
                 as_of: datetime, cfg: StrategyConfig) -> Optional[Setup]:
